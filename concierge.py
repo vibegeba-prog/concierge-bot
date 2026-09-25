@@ -23,7 +23,7 @@ import json
 import random
 import argparse
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -49,6 +49,46 @@ DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
 LOG_FILE = DATA_DIR / "posts_log.jsonl"
+MSK = timezone(timedelta(hours=3))
+
+
+def template_key(text: str) -> str:
+    """Сравнивает начало шаблона, не учитывая температуру и время.
+
+    Первые 60 символов позволяют использовать и старые записи text_preview.
+    """
+    return re.sub(r"[+−-]?\d+(?:[.,:]\d+)*", "#", text)[:60]
+
+
+def choose_template(templates: list[str], mode: str) -> str:
+    """Выбирает ещё не использованный или наиболее давний шаблон.
+
+    Учитывает только успешные публикации; история сохраняется между запусками.
+    """
+    last_used = {}
+    try:
+        with LOG_FILE.open(encoding="utf-8") as history:
+            for index, line in enumerate(history):
+                try:
+                    entry = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("mode") != mode or entry.get("success") is not True:
+                    continue
+                text = entry.get("text") or entry.get("text_preview")
+                if isinstance(text, str):
+                    last_used[template_key(text)] = index
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"[WARN] Не удалось прочитать историю публикаций: {exc}")
+
+    oldest = min(last_used.get(template_key(text), -1) for text in templates)
+    candidates = [text for text in templates
+                  if last_used.get(template_key(text), -1) == oldest]
+    return random.choice(candidates)
 
 # ============================================================
 # 2. VK API: ОПРЕДЕЛЕНИЕ ЧИСЛОВОГО ID ГРУППЫ
@@ -176,7 +216,7 @@ def sunset_already_passed(sunset_time: str) -> bool:
     """Проверяет, село ли солнце раньше текущего времени (по МСК)."""
     try:
         sunset_h, sunset_m = map(int, sunset_time.split(":"))
-        now_msk = datetime.utcnow() + timedelta(hours=3)
+        now_msk = datetime.now(MSK)
         sunset_dt = now_msk.replace(hour=sunset_h, minute=sunset_m, second=0, microsecond=0)
         return now_msk > sunset_dt
     except Exception:
@@ -188,10 +228,10 @@ def sunset_already_passed(sunset_time: str) -> bool:
 # ============================================================
 
 def generate_morning_post(weather: dict) -> str:
-    """Генерирует утренний пост для ЖК Мурино."""
+    """Генерирует утренний пост для Васильевского острова."""
     temp = weather["temp"]
     feels = weather["feels_like"]
-    desc = weather["description"]
+    desc = weather["description"].lower()
     wind = weather["wind_speed"]
     emoji = weather_to_emoji(desc)
 
@@ -199,33 +239,33 @@ def generate_morning_post(weather: dict) -> str:
 
     if "дождь" in desc or "ливень" in desc or "гроза" in desc:
         templates = [
-            f"{emoji} За окнами {DISTRICT} — дождь, +{temp}° (по ощущениям +{feels}°). Не забудьте зонт и закройте форточки перед уходом. Проходите аккуратно — лужи есть, но убираем. Хорошего дня!",
-            f"{emoji} Утро на {DISTRICT_PREP} начинается с дождя, +{temp}°. Если ещё дома — захватите непромокаемую обувь. Мы на месте, следим за состоянием дворов. Берегите себя!",
+            f"{emoji} За окнами {DISTRICT} — дождь, {temp:+d}° (по ощущениям {feels:+d}°). Не забудьте зонт и закройте форточки перед уходом. Проходите аккуратно — лужи есть, но убираем. Хорошего дня!",
+            f"{emoji} Утро на {DISTRICT_PREP} начинается с дождя, {temp:+d}°. Если ещё дома — захватите непромокаемую обувь. Мы на месте, следим за состоянием дворов. Берегите себя!",
         ]
     elif "снег" in desc or "снегопад" in desc:
         templates = [
-            f"{emoji} Снегопад в {CITY_PREP}, +{temp}°. Дворники уже убирают подъезды и тротуары. На дорогах скользко — не спешите. Тёплого дня!",
-            f"{emoji} Снежное утро на {DISTRICT_PREP}, +{temp}°. Уборка снега и посыпка песком в полном разгаре. Выходите в удобной обуви. Доброго дня!",
+            f"{emoji} Снегопад в {CITY_PREP}, {temp:+d}°. Дворники уже убирают подъезды и тротуары. На дорогах скользко — не спешите. Тёплого дня!",
+            f"{emoji} Снежное утро на {DISTRICT_PREP}, {temp:+d}°. Уборка снега и посыпка песком в полном разгаре. Выходите в удобной обуви. Доброго дня!",
         ]
     elif temp >= 25:
         templates = [
-            f"{emoji} Жара на {DISTRICT_PREP}: +{temp}°! Проветрите квартиру утром, пока не начался зной. Пейте больше воды и не забывайте про пожилых соседей. Лёгкого дня!",
-            f"{emoji} +{temp}° — лето в разгаре. Идеальный день для вечерней прогулки по набережной, а пока — тень и прохлада. Бодрого дня!",
+            f"{emoji} Жара на {DISTRICT_PREP}: {temp:+d}°! Проветрите квартиру утром, пока не начался зной. Пейте больше воды и не забывайте про пожилых соседей. Лёгкого дня!",
+            f"{emoji} {temp:+d}° — сегодня жарко. Идеальный день для вечерней прогулки по набережной, а пока — тень и прохлада. Бодрого дня!",
         ]
     elif temp >= 18:
         templates = [
-            f"{emoji} +{temp}° — погода, ради которой стоит проснуться пораньше. Ветер {wind} м/с, на {DISTRICT_PREP} сейчас особенно свежо. Прекрасного дня!",
-            f"{emoji} Прекрасное утро в {CITY_PREP}: +{temp}°. Окна на запад открывайте сейчас — до обеда будет прохладно и тихо. Удачного дня!",
+            f"{emoji} {temp:+d}° — погода, ради которой стоит проснуться пораньше. Ветер {wind} м/с, на {DISTRICT_PREP} сейчас особенно свежо. Прекрасного дня!",
+            f"{emoji} Прекрасное утро в {CITY_PREP}: {temp:+d}°. Окна на запад открывайте сейчас — до обеда будет прохладно и тихо. Удачного дня!",
         ]
     elif temp >= 10:
         templates = [
-            f"{emoji} Прохладно, +{temp}°, {desc}. Ветер {wind} м/с — наденьте кофту. Ничего, скоро лето. Приятного дня!",
-            f"{emoji} +{temp}° на {DISTRICT_PREP}. Свежо, как после дождя. Чашка кофе — и вперёд. Бодрого дня!",
+            f"{emoji} Прохладно, {temp:+d}°, {desc}. Ветер {wind} м/с — наденьте кофту. Приятного дня!",
+            f"{emoji} {temp:+d}° на {DISTRICT_PREP}. Свежо, как после дождя. Чашка кофе — и вперёд. Бодрого дня!",
         ]
     elif temp >= 0:
         templates = [
-            f"{emoji} Холодное утро на {DISTRICT_PREP}: +{temp}°. Не забудьте шапку — ветер {wind} м/с. Подъезды тёплые, лифты работают. Счастливого дня!",
-            f"{emoji} +{temp}° — пора доставать пальто. Тёплый кофе, любимый шарф — и вперёд. Продуктивного дня!",
+            f"{emoji} Холодное утро на {DISTRICT_PREP}: {temp:+d}°. Не забудьте шапку — ветер {wind} м/с. Подъезды тёплые, лифты работают. Счастливого дня!",
+            f"{emoji} {temp:+d}° — пора доставать пальто. Тёплый кофе, любимый шарф — и вперёд. Продуктивного дня!",
         ]
     else:
         templates = [
@@ -233,7 +273,7 @@ def generate_morning_post(weather: dict) -> str:
             f"{emoji} {temp}° — настоящий мороз. Тёплый чай и хорошее настроение — лучшая защита от холода. Согревающего дня!",
         ]
 
-    post = random.choice(templates)
+    post = choose_template(templates, "morning")
     post = post + "\n\n" + "#УКМир #ЖКХ #СанктПетербург #ВасильевскийОстров #погода"
     return post
 
@@ -253,7 +293,7 @@ def generate_evening_post(sunset_time: str | None) -> str:
             f"⭐ Небо над Невой уже тёмное. Время чая, книги или любимого сериала. Завтра новый день. Спокойной ночи!",
             f"🌙 {DISTRICT_PREP} тихий и спокойный. Желаем вам тёплого пледа и сладких снов. До встречи утром!",
         ]
-        post = random.choice(templates)
+        post = choose_template(templates, "evening")
         post = post + "\n\n" + "#УКМир #ЖКХ #СанктПетербург #ВасильевскийОстров #вечер"
         return post
 
@@ -272,7 +312,7 @@ def generate_evening_post(sunset_time: str | None) -> str:
             f"🌆 Вечер в {CITY_PREP}. Окна горят тёплым светом — приятно смотреть с улицы. Отдохните хорошо.",
         ]
 
-    post = random.choice(templates)
+    post = choose_template(templates, "evening")
     post = post + "\n\n" + "#УКМир #ЖКХ #СанктПетербург #ВасильевскийОстров #вечер"
     return post
 
@@ -315,9 +355,10 @@ def post_to_vk(text: str, token: str, group_input: str) -> bool:
 def log_post(mode: str, text: str, success: bool):
     """Записывает информацию о посте в лог."""
     entry = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(MSK).isoformat(),
         "mode": mode,
         "text_preview": text[:120],
+        "text": text,
         "success": success,
     }
     with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -341,7 +382,7 @@ def main():
         print("[FATAL] Задайте VK_GROUP_ID!")
         sys.exit(1)
 
-    today = datetime.now()
+    today = datetime.now(MSK)
     weekday = today.weekday()
     print(f"[{today.strftime('%Y-%m-%d %H:%M')}] Режим: {args.mode}")
 
