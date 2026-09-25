@@ -4,8 +4,8 @@
 ИИ-Консьерж УК "Мир" для VK
 --------------------------
 Автоматические посты в группу ВКонтакте:
-  • Утро (9:00) — пн, ср, пт: погода + доброе пожелание
-  • Вечер (20:00) — вт, чт: закат + пожелание
+  • Утро (9:00) — вт, чт: погода + доброе пожелание
+  • Вечер (19:30) — пн, ср, пт: закат + пожелание
 
 Запуск:
   python concierge.py --mode morning
@@ -372,7 +372,7 @@ def log_post(mode: str, text: str, success: bool):
 def main():
     parser = argparse.ArgumentParser(description="ИИ-Консьерж УК Мир")
     parser.add_argument("--mode", choices=["morning", "evening"], required=True,
-                        help="Режим: morning (9:00) или evening (20:00)")
+                        help="Режим: morning (9:00) или evening (19:30)")
     args = parser.parse_args()
 
     if not VK_ACCESS_TOKEN:
@@ -387,7 +387,7 @@ def main():
     print(f"[{today.strftime('%Y-%m-%d %H:%M')}] Режим: {args.mode}")
 
     if args.mode == "morning":
-        if weekday not in (0, 2, 4):
+        if weekday not in (1, 3):
             days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
             print(f"[INFO] Сегодня {days[weekday]} — утренний пост пропускаем.")
             return
@@ -407,7 +407,7 @@ def main():
         return
 
     if args.mode == "evening":
-        if weekday not in (1, 3):
+        if weekday not in (0, 2, 4):
             days = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"]
             print(f"[INFO] Сегодня {days[weekday]} — вечерний пост пропускаем.")
             return
